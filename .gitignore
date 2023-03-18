@@ -161,3 +161,7 @@ cython_debug/
 
 # Ignore secrets
 api-key
+
+# Ignore sqlite3 db files
+
+*.db

@@ -1,13 +1,17 @@
 import asyncio
 import sqlite3
 import requests
+from datetime import date
 from asyncio import Task
 from pprint import pprint
 from pathlib import Path
 from typing import List, Dict, Optional
 
 DATABASE_NAME = "financial.db"
-tickers = ("IBM",)
+tickers = (
+    "IBM",
+    "AAPL",
+)
 
 
 async def query_data(ticker: str, api_key: str) -> Optional[Dict]:
@@ -38,21 +42,33 @@ async def query_data(ticker: str, api_key: str) -> Optional[Dict]:
     # Returned data can be invalid or missing
     try:
         r = requests.get(url)
-        data = r.json()
     except Exception as e:
         print(f"Could not get data: {e}")
+        return data
+
+    try:
+        data = r.json()
+    except Exception as e:
+        print(f"Could not process data: {e}")
+        return data
     finally:
         return data
 
 
-def data_extract(data_fetched: Dict[str, Dict]) -> List[Dict[str, str]]:
+def data_extract(
+    data_fetched: Dict[str, Dict], num_days: Optional[int] = None
+) -> List[Dict[str, str]]:
     """Converts request JSON data to required data with all the data flatened to
-    symbol, date, open_price, close_price, volume.
+    symbol, date, open_price, close_price, volume. If num_days is provided, specific
+    amount of entries is stored for each symbol.
 
     Parameters:
     -----------
     data_fetched : Dict[str, Dict]
         Dictionary of mappings from ticker to related financial data.
+    num_days : int
+        Number of days to filter from the last. If num_days <= 0 or num_days is None,
+        then fetched data won't be changed.
 
     Returns:
     --------
@@ -60,20 +76,63 @@ def data_extract(data_fetched: Dict[str, Dict]) -> List[Dict[str, str]]:
         List of entries with required fields.
     """
     data_extracted = []
+    ENTRIES_TYPE = "Time Series (Daily)"
 
     for ticker, data in data_fetched.items():
-        for day, entry in data["Time Series (Daily)"].items():
-            data_extracted.append(
-                {
-                    "symbol": ticker,  # Symbol and ticker mean the same in this context
-                    "date": str(day),
-                    "open_price": str(entry["1. open"]),
-                    "close_price": str(entry["4. close"]),
-                    "volume": str(entry["6. volume"]),
-                }
-            )
+        if num_days is None or num_days <= 0:
+            # Sanity check in case JSON does not have data
+            if not check_dict_key(data, ENTRIES_TYPE):
+                print(f"Skipping: '{ticker}': no data: {ENTRIES_TYPE}")
+                break
+
+            for day, entry in data[ENTRIES_TYPE].items():
+                data_extracted.append(
+                    {
+                        # Symbol and ticker mean the same in this context
+                        "symbol": ticker,
+                        "date": str(day),
+                        "open_price": str(entry["1. open"]),
+                        "close_price": str(entry["4. close"]),
+                        "volume": str(entry["6. volume"]),
+                    }
+                )
+
+        else:
+            # Sanity check in case JSON does not have data
+            if not check_dict_key(data, ENTRIES_TYPE):
+                print(f"Skipping: '{ticker}': no data: {ENTRIES_TYPE}")
+                break
+
+            # Sort dictionary by dates, enumerate each trade day
+            # reverse the iterable and collect entries to data_extracted
+            # until num_days is satisfied
+            for i, (day, entry) in enumerate(
+                (
+                    sorted(
+                        data[ENTRIES_TYPE].items(),
+                        key=lambda item: date.fromisoformat(item[0]),
+                        reverse=True,
+                    )
+                )
+            ):
+                if i >= num_days:
+                    break
+
+                data_extracted.append(
+                    {
+                        "symbol": ticker,
+                        "date": str(day),
+                        "open_price": str(entry["1. open"]),
+                        "close_price": str(entry["4. close"]),
+                        "volume": str(entry["6. volume"]),
+                    }
+                )
 
     return data_extracted
+
+
+def check_dict_key(dict: Dict[str, str], key: str) -> bool:
+    return key in dict
 
 
 def database_connect(database_name: str) -> Optional[sqlite3.Connection]:
@@ -98,10 +157,11 @@ def database_connect(database_name: str) -> Optional[sqlite3.Connection]:
         return con
 
 
-def database_populate(
-    con: sqlite3.Connection, data_processed: List[Dict[str, str]], sequential: bool
+def database_populate_update(
+    con: sqlite3.Connection, data_processed: List[Dict[str, str]]
 ):
-    """Populates database with new values.
+    """Populates database's table with new values if table doesn't exist, otherwise
+    updates table entries.
 
     Parameters:
     -----------
@@ -116,51 +176,89 @@ def database_populate(
     res = cur.execute("SELECT name FROM sqlite_master")
     res = res.fetchone()
 
+    # Populate database in case there is no table
     if res in {
         None,
         (),
     }:
+        print(f"Table don't exist, creating {len(data_processed)} entries")
         res = cur.execute(
-            "CREATE TABLE financial_data(symbol, date, open_price, close_price, volume)"
+            "CREATE TABLE "
+            "financial_data(symbol TEXT, date TEXT, "
+            "open_price TEXT, close_price TEXT, volume TEXT)"
         )
-        db_command = ""
+    else:
+        print(f"Table exists, updating {len(data_processed)} entries")
 
-        # Insert value into database, one by one
-        if sequential:
-            for d in data_processed:
-                cur.execute(
-                    "INSERT INTO financial_data VALUES\n\t"
-                    "('{}', '{}', '{}', '{}', '{}')".format(
+    # Insert values into database, one by one
+    database_populate_sequential(cur, data_processed)
+
+    con.commit()
+
+
+def database_populate_sequential(
+    cur: sqlite3.Cursor, data_processed: List[Dict[str, str]]
+):
+    """Checks that database table already has entries.
+    Populates or updates entire database table entry by entry.
+
+    Parameters:
+    -----------
+    cur : sqlite3.Cursor
+        Database cursor.
+    data_processed : List[Dict[str, str]]
+        List of processed data entries.
+    """
+    for d in data_processed:
+        # In SQLite first the check then command, to avoid adding duplicates
+        # If resulting list is empty - insert new entry, otherwise update is
+        # needed.
+        cur.execute(
+            "SELECT symbol FROM financial_data "
+            f"""WHERE symbol = '{d["symbol"]}' AND date = '{d["date"]}';"""
+        )
+
+        res = cur.fetchall()
+
+        if len(res) == 0:
+            db_command = "".join(
+                (
+                    "INSERT INTO financial_data ",
+                    "VALUES ('{}', '{}', '{}', '{}', '{}')\n".format(
                         d["symbol"],
                         d["date"],
                         d["open_price"],
                         d["close_price"],
                         d["volume"],
-                    )
+                    ),
                 )
-
-        # Extract values from the data_processed and create a db command
-        # add first line, then construct the string from all values
-        else:
-            db_command = "INSERT INTO financial_data VALUES\n\t" + "\n\t".join(
-                [
-                    "('{}', '{}', '{}', '{}', '{}')".format(
-                        d["symbol"],
-                        d["date"],
-                        d["open_price"],
-                        d["close_price"],
-                        d["volume"],
-                    )
-                    for d in data_processed
-                ]
             )
 
             cur.execute(db_command)
 
-        print(db_command)
+        else:
+            db_command = "".join(
+                (
+                    "UPDATE financial_data SET ",
+                    "{} = '{}', {} = '{}', {} = '{}'\n".format(
+                        "open_price",
+                        d["open_price"],
+                        "close_price",
+                        d["close_price"],
+                        "volume",
+                        d["volume"],
+                    ),
+                    f"""WHERE symbol = '{d["symbol"]}' AND date = '{d["date"]}';""",
+                )
+            )
+
+            cur.execute(db_command)
 
 
 async def main():
+    """Asyncronously pulls data from the source using api-key file.
+    Synchronously unites data and populates database.
+    """
     api_key_path = Path(Path(__file__).resolve().parent, "api-key").resolve()
 
     if not all((api_key_path.exists(), api_key_path.is_file())):
@@ -188,24 +286,24 @@ async def main():
     data_processed = []
 
     if len(data_fetched) > 0:
-        # pprint(data_fetched)
-        data_processed = data_extract(data_fetched)
+        # Leave only last 2 weeks
+        data_processed = data_extract(data_fetched, 14)
     else:
         print("Data from response was not processed")
         return
 
-    pprint(data_processed)
-
     if len(data_processed) > 0:
         connection = database_connect(DATABASE_NAME)
+
         if connection is None:
-            print("No database to populate")
+            print("Could not connect to database, skipping operations")
             return
 
-        database_populate(connection, data_processed, False)
+        # Populate or update database with acquired data, sequentally
+        database_populate_update(connection, data_processed)
 
     else:
-        print("No data to put into database")
+        print("No data to populate or update database")
         return
 
 
