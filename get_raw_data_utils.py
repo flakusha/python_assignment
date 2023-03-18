@@ -3,16 +3,7 @@ import sqlite3
 from typing import List, Dict, Optional, Any
 from pprint import pprint
 from datetime import date
-from dataclasses import dataclass
-
-
-@dataclass
-class DataEntry:
-    symbol: str
-    date: str
-    open_price: str
-    close_price: str
-    volume: str
+from financial.DataEntry import DataEntry
 
 
 async def query_data(ticker: str, api_key: str) -> Optional[Dict]:
@@ -32,13 +23,12 @@ async def query_data(ticker: str, api_key: str) -> Optional[Dict]:
     JSON Response : Optional[Dict]
         JSON Response from the server if connection and processing is successfull.
     """
+    data = None
     url = (
         "https://www.alphavantage.co/"
         "query?function=TIME_SERIES_DAILY_ADJUSTED"
         f"&symbol={ticker}&apikey={api_key}"
     )
-
-    data = None
 
     # Returned data can be invalid or missing
     try:
@@ -55,7 +45,6 @@ async def query_data(ticker: str, api_key: str) -> Optional[Dict]:
         data = r.json()
     except Exception as e:
         print(f"Could not process data: {e}")
-        return None
     finally:
         return data
 
@@ -125,7 +114,7 @@ def data_extract(
 
 
 def key_in_dict(dict: Dict[str, Any], key: str) -> bool:
-    """Returns True if key is in dictionary.
+    """Simple wrapper that returns True if key is in dictionary.
 
     Parameters:
     -----------
@@ -165,9 +154,7 @@ def database_connect(database_name: str) -> Optional[sqlite3.Connection]:
         return con
 
 
-def database_populate_update(
-    con: sqlite3.Connection, data_processed: List[Dict[str, str]]
-):
+def database_populate_update(con: sqlite3.Connection, data_processed: List[DataEntry]):
     """Populates database's table with new values if table doesn't exist, otherwise
     updates table entries.
 
@@ -175,7 +162,7 @@ def database_populate_update(
     -----------
     con : sqlite3.Connection
         Database connection.
-    data_processed : List[Dict[str, str]]
+    data_processed : List[DataEntry]
         List of financial data entries.
     sequential : bool
         Insert entries one by one or simultaneously.
@@ -204,9 +191,7 @@ def database_populate_update(
     con.commit()
 
 
-def database_populate_sequential(
-    cur: sqlite3.Cursor, data_processed: List[Dict[str, str]]
-):
+def database_populate_sequential(cur: sqlite3.Cursor, data_processed: List[DataEntry]):
     """Checks that database table already has entries.
     Populates or updates entire database table entry by entry.
 
@@ -214,16 +199,15 @@ def database_populate_sequential(
     -----------
     cur : sqlite3.Cursor
         Database cursor.
-    data_processed : List[Dict[str, str]]
+    data_processed : List[DataEntry]
         List of processed data entries.
     """
     for d in data_processed:
-        # In SQLite first the check then command, to avoid adding duplicates
-        # If resulting list is empty - insert new entry, otherwise update is
-        # needed.
+        # In SQLite first the check needed, then command, to avoid adding duplicates
+        # If resulting list is empty - insert new entry, otherwise update is needed.
         cur.execute(
             "SELECT symbol FROM financial_data "
-            f"""WHERE symbol = '{d["symbol"]}' AND date = '{d["date"]}';"""
+            f"""WHERE symbol = '{d.symbol}' AND date = '{d.date}';"""
         )
 
         res = cur.fetchall()
@@ -233,11 +217,7 @@ def database_populate_sequential(
                 (
                     "INSERT INTO financial_data ",
                     "VALUES ('{}', '{}', '{}', '{}', '{}')\n".format(
-                        d["symbol"],
-                        d["date"],
-                        d["open_price"],
-                        d["close_price"],
-                        d["volume"],
+                        d.symbol, d.date, d.open_price, d.close_price, d.volume
                     ),
                 )
             )
@@ -250,14 +230,25 @@ def database_populate_sequential(
                     "UPDATE financial_data SET ",
                     "{} = '{}', {} = '{}', {} = '{}'\n".format(
                         "open_price",
-                        d["open_price"],
+                        d.open_price,
                         "close_price",
-                        d["close_price"],
+                        d.close_price,
                         "volume",
-                        d["volume"],
+                        d.volume,
                     ),
-                    f"""WHERE symbol = '{d["symbol"]}' AND date = '{d["date"]}';""",
+                    f"""WHERE symbol = '{d.symbol}' AND date = '{d.date}';""",
                 )
             )
 
             cur.execute(db_command)
+
+
+def database_dump_schema(con: sqlite3.Connection, name: str):
+    with open(name, "wt") as sc:
+        cur = con.cursor()
+
+        for line in cur.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'financial_data'"
+        ).fetchall():
+            print(line[0])
+            sc.write(f"{line[0]}\n")
