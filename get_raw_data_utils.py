@@ -178,9 +178,13 @@ def database_populate_update(con: sqlite3.Connection, data_processed: List[DataE
     }:
         print(f"Table don't exist, creating {len(data_processed)} entries")
         res = cur.execute(
-            "CREATE TABLE "
-            "financial_data(symbol TEXT, date TEXT, "
-            "open_price TEXT, close_price TEXT, volume TEXT)"
+            " ".join(
+                (
+                    "CREATE TABLE",
+                    "financial_data(symbol TEXT, date TEXT,",
+                    "open_price TEXT, close_price TEXT, volume TEXT)",
+                )
+            )
         )
     else:
         print(f"Table exists, updating {len(data_processed)} entries")
@@ -206,17 +210,21 @@ def database_populate_sequential(cur: sqlite3.Cursor, data_processed: List[DataE
         # In SQLite first the check needed, then command, to avoid adding duplicates
         # If resulting list is empty - insert new entry, otherwise update is needed.
         cur.execute(
-            "SELECT symbol FROM financial_data "
-            f"""WHERE symbol = '{d.symbol}' AND date = '{d.date}';"""
+            " ".join(
+                (
+                    "SELECT symbol FROM financial_data ",
+                    f"""WHERE symbol = '{d.symbol}' AND date = '{d.date}';""",
+                )
+            )
         )
 
         res = cur.fetchall()
 
         if len(res) == 0:
-            db_command = "".join(
+            db_command = " ".join(
                 (
-                    "INSERT INTO financial_data ",
-                    "VALUES ('{}', '{}', '{}', '{}', '{}')\n".format(
+                    "INSERT INTO financial_data",
+                    "VALUES ('{}', '{}', '{}', '{}', '{}')".format(
                         d.symbol, d.date, d.open_price, d.close_price, d.volume
                     ),
                 )
@@ -225,10 +233,10 @@ def database_populate_sequential(cur: sqlite3.Cursor, data_processed: List[DataE
             cur.execute(db_command)
 
         else:
-            db_command = "".join(
+            db_command = " ".join(
                 (
-                    "UPDATE financial_data SET ",
-                    "{} = '{}', {} = '{}', {} = '{}'\n".format(
+                    "UPDATE financial_data SET",
+                    "{} = '{}', {} = '{}', {} = '{}'".format(
                         "open_price",
                         d.open_price,
                         "close_price",

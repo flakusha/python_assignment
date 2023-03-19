@@ -16,7 +16,7 @@ from get_raw_data_utils import (
 # would be better solution to use argparse
 RANGE_DAYS: Optional[int] = 14
 # Set the database name
-DATABASE_NAME: str = "financial.db"
+DATABASE_NAME: str = "financial/financial.db"
 DATABASE_SCHEMA_NAME: str = "schema.sql"
 # List desired tickers here, better solution is to pass them as argv and use argparse
 tickers = (
@@ -80,7 +80,6 @@ async def main():
         database_populate_update(connection, data_processed)
         # Dump SQLite database schema to file
         database_dump_schema(connection, DATABASE_SCHEMA_NAME)
-
 
     else:
         print("No data to populate or update database")
