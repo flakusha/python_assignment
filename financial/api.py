@@ -28,7 +28,6 @@ async def on_startup():
 @APP.exception_handler(RequestValidationError)
 async def request_validation_error(req: Request, err: RequestValidationError):
     """Returns error information if request is incorrect"""
-    print(f"Got: {req}")
     return JSONResponse(
         content={
             "info": "\n".join(e["msg"] for e in err.errors()),
@@ -78,11 +77,32 @@ async def on_financial_data_call(
     if check is not None:
         return check
 
-    # Default values for request
+    # Default values for request, force to positive, amount of code should be
+    # reduced
     if limit is None:
         limit = 5
+    else:
+        if isinstance(limit, int):
+            limit = abs(limit)
+        else:
+            return JSONResponse(
+                content={
+                    "info": {"error": "Limit is in incompatible format"},
+                },
+                status_code=400,
+            )
     if page is None:
         page = 1
+    else:
+        if isinstance(page, int):
+            page = abs(page)
+        else:
+            return JSONResponse(
+                content={
+                    "info": {"error": "Page is in incompatible format"},
+                },
+                status_code=400,
+            )
 
     DB_CONNECTION = sqlite3.connect(DB_NAME)
 
@@ -126,7 +146,6 @@ async def on_financial_data_call(
 
     # Collect data from the database request to actual response
     for res in ress:
-        print(res)
         entry = DataEntry(res[1], res[2], res[3], res[4], res[5])
         entries.append(asdict(entry))
 
@@ -224,8 +243,8 @@ async def on_statistics_data_call(
                 "start_date": start_date,
                 "end_date": end_date,
                 "symbol": symbol,
-                "average_daily_open_price": round(avg_daily_open, 3),
-                "average_daily_close_price": round(avg_daily_close, 3),
+                "average_daily_open_price": round(avg_daily_open, 2),
+                "average_daily_close_price": round(avg_daily_close, 2),
                 "average_daily_volume": int(avg_daily_volume),
             },
             "info": {"error": ""},

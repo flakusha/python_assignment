@@ -226,3 +226,79 @@ Your solution will be evaluated based on the following criteria:
 ## Additional Notes:
 
 You have 7 days to complete this assignment and submit your solution.
+
+# Notes on assignment:
+
+## Description of dependencies:
+
+### I have tried to opt out to minimum amount of dependencies for this assignment:
+
+- SQLite3 - built-in Python database support
+- Requests - default choice to get raw data from web
+- FastAPI - Python async API server
+- Uvicorn - ASGI web server implementation for Python best combined with FastAPI
+- Docker - it's expected that Docker is installed and running on the system
+- Alpine (in Docker) - lightweight distribution to install Python, manage dependencies
+(as result image size is smaller than python-slim docker)
+
+### What could be added to make code more readable
+
+- SQLAlchemy would be much more user-friendly approach than sqlite3 to build database
+queries
+
+### Development:
+
+- black - Python code formatting
+- mypy and pylsp - code linting, type validity checks
+
+## Actions needed to be performed to run and test application:
+
+- Create `api-key` file with your key for Alphavantage OR pass `API_KEY` environmental
+variable to Docker compose, so data can be loaded
+- Run `docker-compose up -d --build` which will
+    - Download alpine
+    - Install python3 and pip3, add non-admin user
+    - Create app folder, move only needed files from this git repo
+    - Install required Python dependencies and load data using API key, place database
+    near api.py
+    - Set the correct working directory and run the uvicorn app on localhost:5000
+- Now API can be tested, I recommend trying Firefox to get structured JSON responses
+    - `http://localhost:5000/api/financial_data?start_date=2023-02-02&end_date=2023-03-17&symbol=IBM&limit=2&page=1`
+    - `http://localhost:5000/api/statistics?start_date=2023-03-01&end_date=2023-03-15&symbol=IBM`
+
+*NOTE:* Aside from providing API key, nothing is required from the user.
+
+## Notes on development:
+
+### Stored data types
+
+I followed sample responses that were provided in task description.
+
+Storing financial data and doing calculations in floats is discouraged, so in the best
+case scenario custom numeric, e.g. Decimal should be used. Storing the same data in
+strings is less convenient for developer as conversion is required every time data is
+gathered from database.
+
+### Exception handling
+
+I have tried to provide exception handling for problems I encountered during development
+and cases that would happen. For bigger application more request and response checks
+will be needed and more cases should be taken in account.
+For example, at the moment one can request huge amount of data from the API
+
+### Managing API key
+
+For API key management following approaches can be applied:
+- Opt out for .env file to load keys in development
+- Store and regenerate them in secret management service
+- Store key in server environment only
+- Mount a volume to Docker image with secret key(s), so keys are guaranteed to be stored
+separately
+
+Of cource, api keys are never to be commited and never hardcoded in source files
+
+### Misc
+
+- Docstrings and comments left around the code to give other people better understanding
+of what's happening in application.
+- SQL schema is dumped automatically at the moment and can be enchanced.
